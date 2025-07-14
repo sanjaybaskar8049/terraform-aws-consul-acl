@@ -279,6 +279,8 @@ function generate_consul_config {
   local -r config_path="$config_dir/$CONSUL_CONFIG_FILE"
   local -r enable_acl="${21}"
   local -r node_prefix="${22}"
+  local -r instance_ip=$(cat /etc/hostname)
+  local node_name=""
 
   shift 22
   local -r recursors=("$@")
@@ -378,12 +380,29 @@ EOF
 )
   fi
 
-  if [ -z "$node_prefix" ] || [ "$node_prefix" == "" ]; then
-      log_info "node_prefix is not set. Hence using default $instance_id from metadata"
+  local base_node_name_part=""
+  if [[ -z "$instance_ip" ]]; then # Check if instance_ip (from /etc/hostname) is empty
+    log_warn "Could not get hostname from /etc/hostname. Falling back to AWS instance ID ($instance_id) for node name part."
+    base_node_name_part="$instance_id"
   else
-      log_info "adding $node_prefix-$instance_id to the node_name config"
-      instance_id="$node_prefix-$instance_id"
-    fi
+    log_info "Using hostname from /etc/hostname ($instance_ip) for node name part."
+    base_node_name_part="$instance_ip"
+  fi
+  
+  if [ -z "$node_prefix" ] || [ "$node_prefix" == "" ]; then
+      log_info "node_prefix is not set. Using base node name part ($base_node_name_part) as node_name."
+      node_name="$base_node_name_part"
+  else
+      log_info "Adding node_prefix ($node_prefix) to base node name part ($base_node_name_part) for node_name config."
+      node_name="$node_prefix-$base_node_name_part"
+  fi
+
+  # if [ -z "$node_prefix" ] || [ "$node_prefix" == "" ]; then
+  #     log_info "node_prefix is not set. Hence using default $instance_id from metadata"
+  # else
+  #     log_info "adding $node_prefix-$instance_ip to the node_name config"
+  #     node_name="$node_prefix-$instance_ip"
+  #   fi
 
 # adding default telemetry configuration for consul based on https://developer.hashicorp.com/consul/docs/release-notes/consul/v1_12_x#what-s-changed
 
@@ -408,7 +427,7 @@ EOF
   $bootstrap_expect
   "client_addr": "0.0.0.0",
   "datacenter": "$datacenter",
-  "node_name": "$instance_id",
+  "node_name": "$node_name",
   $recursors_config
   $retry_join_json
   $acl_configuration
