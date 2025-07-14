@@ -448,15 +448,15 @@ function run {
     if ([ $consul_major_version -ge 1 ] && ( [ $consul_minor_version -ge 9 ] || ([ $consul_minor_version -eq 8 ] && [ $consul_build_version -ge 1 ]))) || [ $consul_major_version -gt 1 ]; then
       # Generate the agent token using the newer method
       log_info "Creating agent token using -node-idenity"
-      agent_token=$(generate_agent_token "$node_prefix-$instance_ip" $datacenter $bootstrap_token)
+      agent_token=$(generate_agent_token "$node_prefix-$agent_node_name_base_part" $datacenter $bootstrap_token)
     else
       # Generate agent policy dynamically and write it
       log_info "Creating agent policy and token"
       local -r agent_policy=$(generate_node_acl_policy $local_hostname)
-      write_acl_policy "$node_prefix-$instance_ip" "$agent_policy" "$bootstrap_token"
+      write_acl_policy "$node_prefix-$agent_node_name_base_part" "$agent_policy" "$bootstrap_token"
 
       # Generate agent token and persist it
-      agent_token=$(generate_token "$node_prefix-$instance_ip" "$node_prefix-$instance_ip agent policy" $bootstrap_token)
+      agent_token=$(generate_token "$node_prefix-$agent_node_name_base_part" "$node_prefix-$agent_node_name_base_part agent policy" $bootstrap_token)
     fi
 
     if [ -z "$agent_token" ] || [ "$agent_token" == "" ]; then
