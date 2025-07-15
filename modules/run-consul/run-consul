@@ -109,6 +109,9 @@ function run {
   local enable_acl
   local acl_storage_type
   local instance_ip=$(cat /etc/hostname)
+  local node_name_use_ip_prefix="false"
+  local instance_id=$(aws_get_instance_id)
+  
 
   while [[ $# -gt 0 ]]; do
     local key="$1"
@@ -254,6 +257,9 @@ function run {
         recursors+=("$2")
         shift
         ;;
+      --node-name-use-ip-prefix) # NEW: Parse true to set the ip as node_name prefix
+        node_name_use_ip_prefix="true"
+        ;;
       --help)
         print_usage
         exit
@@ -323,6 +329,7 @@ function run {
     datacenter=$(aws_get_instance_region)
   fi
 
+
   if [[ "$skip_consul_config" == "true" ]]; then
     log_info "The --skip-consul-config flag is set, so will not generate a default Consul config file."
   else
@@ -357,6 +364,9 @@ function run {
       "$upgrade_version_tag" \
       "$enable_acl" \
       "$node_prefix" \
+      "$node_name_use_ip_prefix" \
+      "$instance_id" \
+      "$instance_ip" \
       "${recursors[@]}"
   fi
 
@@ -365,8 +375,7 @@ function run {
 
   if [[ "$enable_acl" == "true" ]]; then
     local -r asg_name=$(aws_wrapper_get_asg_name $MAX_RETRIES $SLEEP_BETWEEN_RETRIES_SEC)
-     local -r aws_region=$(aws_get_instance_region)
-    local -r instance_id=$(aws_get_instance_id)
+    local -r aws_region=$(aws_get_instance_region)
 
     local bootstrap_token
 
@@ -427,22 +436,30 @@ function run {
 
 
     local agent_token
-    local agent_node_name_base_part=""
+    local agent_node_name_base=""
+    local instance_id=$(aws_get_instance_id) # Ensure these are available here if not already
+    local instance_ip=$(cat /etc/hostname) # Ensure these are available here if not already
 
-    # Determine the base part of the agent's node name (IP or ID)
-    if [[ -z "$instance_ip" ]]; then
-      log_warn "Could not get hostname from /etc/hostname. Using AWS instance ID ($instance_id_from_metadata) for agent node name part."
-      agent_node_name_base_part="$instance_id_from_metadata"
-    else
-      log_info "Using hostname from /etc/hostname ($instance_ip) for agent node name part."
-      agent_node_name_base_part="$instance_ip"
+    # Determine the base part of the agent node name (default to instance ID)
+    agent_node_name_base="$instance_id"
+    log_info "Defaulting agent node name base to AWS instance ID ($instance_id)."
+
+    # NEW: Apply --node-name-use-ip-prefix logic
+    if [[ "$node_name_use_ip_prefix" == "true" ]] && [[ -n "$instance_ip" ]]; then
+      log_info "Option --node-name-use-ip-prefix enabled. Prepending instance IP ($instance_ip) to node name base."
+      agent_node_name_base=${instance_ip}
+    elif [[ "$node_name_use_ip_prefix" == "true" ]] && [[ -z "$instance_ip" ]]; then
+      log_warn "Option --node-name-use-ip-prefix enabled, but hostname from /etc/hostname is empty. Falling back to only instance ID ($instance_id)."
     fi
 
-    local agent_node_name=""
-    if [ -z "$node_prefix" ] || [ "$node_prefix" == "" ]; then
-        agent_node_name="$agent_node_name_base_part"
+    # Apply the optional node_prefix to the final agent node name
+    local final_agent_node_name=""
+    if [ -z "$node_prefix" ]; then
+        log_info "node_prefix is not set. Using base name ($agent_node_name_base) as final agent node name."
+        final_agent_node_name="$agent_node_name_base"
     else
-        agent_node_name="$node_prefix-$agent_node_name_base_part"
+        log_info "Adding node_prefix ($node_prefix) to base name ($agent_node_name_base) for final agent node name."
+        final_agent_node_name="$node_prefix-$agent_node_name_base"
     fi
 
     if ([ $consul_major_version -ge 1 ] && ( [ $consul_minor_version -ge 9 ] || ([ $consul_minor_version -eq 8 ] && [ $consul_build_version -ge 1 ]))) || [ $consul_major_version -gt 1 ]; then
