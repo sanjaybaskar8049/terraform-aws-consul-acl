@@ -280,7 +280,7 @@ function generate_consul_config {
   local -r enable_acl="${21}"
   local -r node_prefix="${22}"
   local -r instance_ip=$(cat /etc/hostname)
-  local node_name_use_ip_prefix_param="${23}"
+  local node_name_use_ip_prefix="${23}"
   # local passed_instance_id_param="${24}"
   # local passed_instance_ip_param="${25}"
 
@@ -385,10 +385,10 @@ EOF
 
   local base_node_name_part="$instance_id" # Default to instance ID
 
-  if [[ "$node_name_use_ip_prefix_param" == "true" ]] && [[ -n "$instance_ip" ]]; then
+  if [[ "$node_name_use_ip_prefix" == "true" ]] && [[ -n "$instance_ip" ]]; then
     log_info "Option --node-name-use-ip-prefix enabled. Prepending instance IP ($instance_ip) to node name base."
     base_node_name_part=${instance_ip}
-  elif [[ "$node_name_use_ip_prefix_param" == "true" ]] && [[ -z "$instance_ip" ]]; then
+  elif [[ "$node_name_use_ip_prefix" == "true" ]] && [[ -z "$instance_ip" ]]; then
     log_warn "Option --node-name-use-ip-prefix enabled, but hostname from /etc/hostname is empty. Falling back to only instance ID ($base_node_name_part)."
   fi
   
