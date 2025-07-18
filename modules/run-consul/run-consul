@@ -87,6 +87,7 @@ function run {
   local user=""
   local cluster_tag_key=""
   local cluster_tag_value=""
+  local naming_strategy="instance-id"  # default
   local node_prefix=""
   local datacenter=""
   local upgrade_version_tag=""
@@ -108,9 +109,6 @@ function run {
   local disable_upgrade_migration="$DEFAULT_AUTOPILOT_DISABLE_UPGRADE_MIGRATION"
   local enable_acl
   local acl_storage_type
-  local instance_ip=$(cat /etc/hostname)
-  local node_name_use_ip_prefix="false"
-  local instance_id=$(aws_get_instance_id)
   
 
   while [[ $# -gt 0 ]]; do
@@ -161,6 +159,11 @@ function run {
       --cluster-tag-value)
         assert_not_empty "$key" "$2"
         cluster_tag_value="$2"
+        shift
+        ;;
+      --naming-strategy)
+        assert_not_empty "$key" "$2"
+        naming_strategy="$2"
         shift
         ;;
       --node-prefix)
@@ -257,9 +260,6 @@ function run {
         recursors+=("$2")
         shift
         ;;
-      --node-name-use-ip-prefix) # NEW: Parse true to set the ip as node_name prefix
-        node_name_use_ip_prefix="true"
-        ;;
       --help)
         print_usage
         exit
@@ -329,7 +329,6 @@ function run {
     datacenter=$(aws_get_instance_region)
   fi
 
-
   if [[ "$skip_consul_config" == "true" ]]; then
     log_info "The --skip-consul-config flag is set, so will not generate a default Consul config file."
   else
@@ -341,6 +340,9 @@ function run {
       assert_not_empty "--cert-file-path" "$cert_file_path"
       assert_not_empty "--key_file_path" "$key_file_path"
     fi
+
+    node_name="$(compute_node_name "$naming_strategy" "$node_prefix")"
+    log_info "computed node_name=\"$node_name\" (strategy=$naming_strategy, prefix=$node_prefix)"
 
     generate_consul_config "$server" \
       "$config_dir" \
@@ -363,10 +365,7 @@ function run {
       "$disable_upgrade_migration" \
       "$upgrade_version_tag" \
       "$enable_acl" \
-      "$node_prefix" \
-      "$node_name_use_ip_prefix" \
-      "$instance_id" \
-      "$instance_ip" \
+      "$node_name" \
       "${recursors[@]}"
   fi
 
@@ -375,7 +374,8 @@ function run {
 
   if [[ "$enable_acl" == "true" ]]; then
     local -r asg_name=$(aws_wrapper_get_asg_name $MAX_RETRIES $SLEEP_BETWEEN_RETRIES_SEC)
-    local -r aws_region=$(aws_get_instance_region)
+     local -r aws_region=$(aws_get_instance_region)
+   # local -r instance_id=$(aws_get_instance_id)
 
     local bootstrap_token
 
@@ -436,44 +436,19 @@ function run {
 
 
     local agent_token
-    local agent_node_name_base=""
-    local instance_id=$(aws_get_instance_id) # Ensure these are available here if not already
-    local instance_ip=$(cat /etc/hostname) # Ensure these are available here if not already
-
-    # Determine the base part of the agent node name (default to instance ID)
-    agent_node_name_base="$instance_id"
-    log_info "Defaulting agent node name base to AWS instance ID ($instance_id)."
-
-    # NEW: Apply --node-name-use-ip-prefix logic
-    if [[ "$node_name_use_ip_prefix" == "true" ]] && [[ -n "$instance_ip" ]]; then
-      log_info "Option --node-name-use-ip-prefix enabled. Prepending instance IP ($instance_ip) to node name base."
-      agent_node_name_base=${instance_ip}
-    elif [[ "$node_name_use_ip_prefix" == "true" ]] && [[ -z "$instance_ip" ]]; then
-      log_warn "Option --node-name-use-ip-prefix enabled, but hostname from /etc/hostname is empty. Falling back to only instance ID ($instance_id)."
-    fi
-
-    # Apply the optional node_prefix to the final agent node name
-    local final_agent_node_name=""
-    if [ -z "$node_prefix" ]; then
-        log_info "node_prefix is not set. Using base name ($agent_node_name_base) as final agent node name."
-        final_agent_node_name="$agent_node_name_base"
-    else
-        log_info "Adding node_prefix ($node_prefix) to base name ($agent_node_name_base) for final agent node name."
-        final_agent_node_name="$node_prefix-$agent_node_name_base"
-    fi
 
     if ([ $consul_major_version -ge 1 ] && ( [ $consul_minor_version -ge 9 ] || ([ $consul_minor_version -eq 8 ] && [ $consul_build_version -ge 1 ]))) || [ $consul_major_version -gt 1 ]; then
       # Generate the agent token using the newer method
       log_info "Creating agent token using -node-idenity"
-      agent_token=$(generate_agent_token "$node_prefix-$agent_node_name_base_part" $datacenter $bootstrap_token)
+      agent_token=$(generate_agent_token "$node_name" $datacenter $bootstrap_token)
     else
       # Generate agent policy dynamically and write it
       log_info "Creating agent policy and token"
       local -r agent_policy=$(generate_node_acl_policy $local_hostname)
-      write_acl_policy "$node_prefix-$agent_node_name_base_part" "$agent_policy" "$bootstrap_token"
+      write_acl_policy "$node_name" "$agent_policy" "$bootstrap_token"
 
       # Generate agent token and persist it
-      agent_token=$(generate_token "$node_prefix-$agent_node_name_base_part" "$node_prefix-$agent_node_name_base_part agent policy" $bootstrap_token)
+      agent_token=$(generate_token "$node_name" "$node_name agent policy" $bootstrap_token)
     fi
 
     if [ -z "$agent_token" ] || [ "$agent_token" == "" ]; then
